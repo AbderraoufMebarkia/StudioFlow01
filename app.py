@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 # AI Model Configuration
-MODEL_NAME = "llama-3.1-70b-versatile"
+MODEL_NAME = "llama-3.3-70b-versatile"
 
 # Mock User Database
 USERS = {
