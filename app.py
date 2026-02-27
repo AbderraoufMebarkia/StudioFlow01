@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from groq import Groq
-from openai import OpenAI  # نستخدمها للاتصال بـ DeepSeek
+from openai import OpenAI
 
 # ==========================================
 # 1. INITIALIZATION & CONFIGURATION
@@ -17,7 +17,8 @@ st.set_page_config(
 
 # Models Configuration
 GROQ_MODEL = "llama-3.3-70b-versatile" 
-DEEPSEEK_MODEL = "deepseek-reasoner" # نموذج التفكير العميق الأحدث R1
+# مسار نموذج DeepSeek عبر OpenRouter
+OPENROUTER_DEEPSEEK_MODEL = "deepseek/deepseek-r1" 
 
 # Mock User Database
 USERS = {
@@ -39,7 +40,6 @@ def init_mock_data():
     if "canvas" not in st.session_state:
         st.session_state.canvas = {}
 
-# محرك الذكاء الاصطناعي المزدوج الذي يقرأ اختيارك من القائمة الجانبية
 def call_ai(system_prompt, user_prompt):
     provider = st.session_state.get("ai_provider", "Groq (Llama 3.3)")
     
@@ -63,23 +63,37 @@ def call_ai(system_prompt, user_prompt):
             return f"Groq API Error: {str(e)}"
             
     elif "DeepSeek" in provider:
-        api_key = os.getenv("DEEPSEEK_API_KEY") or st.secrets.get("DEEPSEEK_API_KEY")
-        if not api_key: return "Error: DEEPSEEK_API_KEY is missing."
+        # قراءة مفتاح OpenRouter بدلاً من DeepSeek المباشر
+        api_key = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
+        if not api_key: return "Error: OPENROUTER_API_KEY is missing. Please add it to Streamlit Secrets."
         
-        # DeepSeek يستخدم بروتوكول متوافق مع OpenAI
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        # توجيه الاتصال إلى خوادم OpenRouter
+        client = OpenAI(
+            api_key=api_key, 
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://launchpad-os.streamlit.app", # رابط تطبيقك
+                "X-Title": "LaunchPad OS", # اسم تطبيقك
+            }
+        )
         try:
             completion = client.chat.completions.create(
-                model=DEEPSEEK_MODEL,
+                model=OPENROUTER_DEEPSEEK_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 max_tokens=2000
             )
-            return completion.choices[0].message.content
+            
+            response_text = completion.choices[0].message.content
+            # تنظيف وسوم التفكير الخاصة بـ DeepSeek R1 لتكون الواجهة أنظف
+            if "</think>" in response_text:
+                response_text = response_text.split("</think>")[-1].strip()
+                
+            return response_text
         except Exception as e:
-            return f"DeepSeek API Error: {str(e)}"
+            return f"OpenRouter API Error: {str(e)}"
 
 # ==========================================
 # 3. AUTHENTICATION MODULE
@@ -215,11 +229,10 @@ def main():
         st.caption(f"User: **{st.session_state.user['name']}**")
         st.divider()
         
-        # 🧠 زر تبديل محرك الذكاء الاصطناعي
         st.subheader("🧠 AI Engine")
         st.radio(
             "Select Processing Engine:",
-            ["Groq (Llama 3.3)", "DeepSeek (Reasoner)"],
+            ["Groq (Llama 3.3)", "DeepSeek (via OpenRouter)"],
             key="ai_provider",
             help="Choose Groq for speed, or DeepSeek for deep analysis."
         )
