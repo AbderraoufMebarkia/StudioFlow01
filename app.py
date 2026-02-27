@@ -1,16 +1,12 @@
 import os
-import json
-import requests
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from dotenv import load_dotenv
+from groq import Groq
 
 # ==========================================
 # 1. INITIALIZATION & CONFIGURATION
 # ==========================================
-load_dotenv()
-
 st.set_page_config(
     page_title="LaunchPad OS | AI Product Research",
     page_icon="🚀",
@@ -18,9 +14,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# OpenRouter Models Configuration
-MODEL_GROK = "x-ai/grok-2-1212" # Great for structured generation & strategy
-MODEL_DEEPSEEK = "deepseek/deepseek-r1" # Great for deep reasoning & analysis
+# Groq Models Configuration
+# نستخدم Llama 3.3 للمهام السريعة وتوليد النصوص
+MODEL_GENERATE = "llama-3.3-70b-versatile" 
+# نستخدم DeepSeek R1 (المستضاف على Groq) لمهام التفكير المعمق والتحليل
+MODEL_REASONING = "deepseek-r1-distill-llama-70b" 
 
 # Mock User Database
 USERS = {
@@ -29,67 +27,70 @@ USERS = {
 }
 
 # ==========================================
-# 2. CORE UTILITIES & AI ENGINE (OpenRouter)
+# 2. CORE UTILITIES & GROQ AI ENGINE
 # ==========================================
 def init_mock_data():
     if "products" not in st.session_state:
         st.session_state.products = pd.DataFrame([
             {"id": "PROD-01", "name": "Ai3DGen", "type": "Digital", "stage": "2. Market Research", "status": "Active"},
-            {"id": "PROD-02", "name": "BlenderFlow: Action Engine", "type": "Digital", "stage": "3. Prototyping", "status": "Active"},
+            {"id": "PROD-02", "name": "BlenderFlow", "type": "Digital", "stage": "3. Prototyping", "status": "Active"},
             {"id": "PROD-03", "name": "Smart Home Hub", "type": "Physical", "stage": "1. Concept", "status": "Draft"}
         ])
     
     if "canvas" not in st.session_state:
         st.session_state.canvas = {}
 
-def call_openrouter(system_prompt, user_prompt, model=MODEL_DEEPSEEK):
-    api_key = os.getenv("OPENROUTER_API_KEY")
+def get_groq_client():
+    # محاولة جلب المفتاح من بيئة التشغيل أو من Streamlit Secrets
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         try:
-            api_key = st.secrets["OPENROUTER_API_KEY"]
+            api_key = st.secrets["GROQ_API_KEY"]
         except:
-            return "Error: OPENROUTER_API_KEY not found in environment or secrets."
-    
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "HTTP-Referer": "https://studioflow-app.com", # Update with your real URL
-        "X-Title": "LaunchPad OS",
-        "Content-Type": "application/json"
-    }
-    
-    data = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.7,
-        "max_tokens": 1500
-    }
+            return None
+    return Groq(api_key=api_key)
+
+def call_groq(system_prompt, user_prompt, model=MODEL_GENERATE):
+    client = get_groq_client()
+    if not client:
+        return "Error: GROQ_API_KEY not found in Streamlit Secrets."
     
     try:
-        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
-        response.raise_for_status()
-        return response.json()['choices'][0]['message']['content']
+        completion = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.6,
+            max_tokens=1500
+        )
+        
+        # نموذج DeepSeek R1 قد يُرجع تفكيره داخل وسوم <think>، نقوم بتنظيفها للواجهة إذا أردنا
+        response_text = completion.choices[0].message.content
+        if "</think>" in response_text:
+            response_text = response_text.split("</think>")[-1].strip()
+            
+        return response_text
     except Exception as e:
         return f"API Error: {str(e)}"
 
 # Specific AI Functions
 def ai_generate_canvas(idea_description):
     sys_prompt = "You are a startup expert. Generate a Business Model Canvas based on the user's idea. Output a clean, structured Markdown response with sections: Target Audience, Value Proposition, Channels, Revenue Streams, Cost Structure."
-    return call_openrouter(sys_prompt, idea_description, model=MODEL_GROK)
+    return call_groq(sys_prompt, idea_description, model=MODEL_GENERATE)
 
 def ai_competitor_analysis(product_niche):
     sys_prompt = "You are a Senior Market Researcher. Analyze the given niche. Identify 3 potential competitors, their strengths, weaknesses, and a potential market gap for a new entrant. Use deep reasoning."
-    return call_openrouter(sys_prompt, product_niche, model=MODEL_DEEPSEEK)
+    return call_groq(sys_prompt, product_niche, model=MODEL_REASONING)
 
 def ai_gate_review(project_data):
-    sys_prompt = "You are a Stage-Gate review board AI. Analyze the project details. Assess Market Attractiveness, Technical Feasibility, and Risk. Give a GO or NO-GO recommendation with 3 bullet points."
-    return call_openrouter(sys_prompt, project_data, model=MODEL_DEEPSEEK)
+    sys_prompt = "You are a Stage-Gate review board AI. Analyze the project details. Assess Market Attractiveness, Technical Feasibility, and Risk. Give a clear GO or NO-GO recommendation with 3 bullet points."
+    return call_groq(sys_prompt, project_data, model=MODEL_REASONING)
 
 def ai_marketing_copy(product_name, features):
-    sys_prompt = "You are a master copywriter. Create a compelling landing page headline, a subheadline, and 3 bullet points for a launch campaign."
-    return call_openrouter(sys_prompt, f"Product: {product_name}\nFeatures: {features}", model=MODEL_GROK)
+    sys_prompt = "You are a master copywriter. Create a compelling landing page headline, a subheadline, and 3 short bullet points for a product launch campaign."
+    return call_groq(sys_prompt, f"Product: {product_name}\nFeatures: {features}", model=MODEL_GENERATE)
 
 # ==========================================
 # 3. AUTHENTICATION MODULE
@@ -141,13 +142,13 @@ def render_dashboard():
 
 def render_phase1_concept():
     st.header("Phase 1: Concept Definition")
-    st.caption("Powered by Grok (via OpenRouter)")
+    st.caption("Powered by Groq (Llama 3.3 70B)")
     
     idea = st.text_area("Describe your product idea in a few sentences:", height=150, placeholder="E.g., An AI-powered standalone 3D generation tool for web...")
     
     if st.button("Generate Business Model Canvas", type="primary"):
         if idea:
-            with st.spinner("Grok is generating your business model..."):
+            with st.spinner("Generating your business model..."):
                 canvas_result = ai_generate_canvas(idea)
                 st.session_state.canvas[idea[:20]] = canvas_result
                 st.markdown(canvas_result)
@@ -156,55 +157,52 @@ def render_phase1_concept():
 
 def render_phase2_market():
     st.header("Phase 2: Market Research & Analysis")
-    st.caption("Powered by DeepSeek R1 (via OpenRouter)")
+    st.caption("Powered by Groq (DeepSeek R1)")
     
     niche = st.text_input("Enter your product niche or industry:")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Run Deep Competitor Analysis", use_container_width=True):
-            if niche:
-                with st.spinner("DeepSeek is reasoning through market data..."):
-                    st.info(ai_competitor_analysis(niche))
-            else:
-                st.warning("Enter a niche to analyze.")
-                
-    with col2:
-        st.button("Generate Customer Survey Template", use_container_width=True)
-        # Placeholder for survey generation logic
+    if st.button("Run Deep Competitor Analysis", type="primary"):
+        if niche:
+            with st.spinner("DeepSeek is reasoning through market data..."):
+                st.info(ai_competitor_analysis(niche))
+        else:
+            st.warning("Enter a niche to analyze.")
 
 def render_phase3_prototype():
     st.header("Phase 3: Design & Prototyping (MVP)")
     st.markdown("Define your **Minimum Viable Product** and build-measure-learn loop.")
     
     product_names = st.session_state.products['name'].tolist()
-    selected_proj = st.selectbox("Select Product", product_names)
+    st.selectbox("Select Product", product_names)
     
-    with st.expander("Define MVP Features"):
+    with st.expander("Define MVP Features", expanded=True):
         st.text_area("Core feature list for initial launch:")
         st.selectbox("Prototyping Tool Recommendation", ["Figma (Digital UI)", "Three.js/WebGL (Web 3D)", "Blender (Add-on/Mockup)", "CAD/SolidWorks (Physical)"])
-        st.button("Save MVP Definition")
+        if st.button("Save MVP Definition"):
+            st.success("MVP definition saved successfully.")
 
 def render_phase4_validation():
     st.header("Phase 4: Testing & Stage-Gate Validation")
+    st.caption("Powered by Groq (DeepSeek R1)")
     
     st.markdown("### 🚦 Official Stage-Gate Review")
-    product_data = st.text_area("Paste MVP test results, user feedback summaries, or technical metrics here:")
+    product_data = st.text_area("Paste MVP test results, user feedback summaries, or technical metrics here:", height=150)
     
     if st.button("Run AI Gate Assessment (GO / NO-GO)"):
         if product_data:
-            with st.spinner("DeepSeek is evaluating gate criteria..."):
+            with st.spinner("Evaluating gate criteria..."):
                 st.success(ai_gate_review(product_data))
         else:
             st.warning("Provide test data for the review board.")
 
 def render_phase5_launch():
-    st.header("Phase 5 & 6: Marketing, Launch & Growth")
+    st.header("Phase 5: Marketing & Launch")
+    st.caption("Powered by Groq (Llama 3.3 70B)")
     
     prod_name = st.text_input("Product Name for Campaign:")
     features = st.text_area("Key Selling Points:")
     
-    if st.button("Generate Launch Copy with Grok"):
+    if st.button("Generate Launch Copy"):
         if prod_name and features:
             with st.spinner("Crafting high-converting copy..."):
                 st.markdown(ai_marketing_copy(prod_name, features))
@@ -232,7 +230,7 @@ def main():
             "2. Market Research", 
             "3. Prototyping (MVP)", 
             "4. Validation (Stage-Gate)", 
-            "5. Launch & Growth"
+            "5. Marketing & Launch"
         ]
         choice = st.radio("Pipeline Stages", menu)
         
@@ -251,7 +249,7 @@ def main():
         render_phase3_prototype()
     elif choice == "4. Validation (Stage-Gate)":
         render_phase4_validation()
-    elif choice == "5. Launch & Growth":
+    elif choice == "5. Marketing & Launch":
         render_phase5_launch()
 
 if __name__ == "__main__":
